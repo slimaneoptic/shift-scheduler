@@ -2,9 +2,15 @@
 
 **Live demo:** https://slimaneoptic-scheduler.streamlit.app
 
-A one-week roster for a 12-person clinic team, built by a constraint-programming optimizer. Managers change it in plain words, like *"Ahmed is off Thursday"* or *"Need 4 on Friday evening"*, and it re-plans while moving as few shifts as possible.
+A one-week roster built by a constraint-programming optimizer. It starts with a 12-person clinic team, and you can **load your own team and coverage** in the app. Managers change it in plain words, like *"Ahmed is off Thursday"* or *"Need 4 on Friday evening"*, and it re-plans while moving as few shifts as possible.
 
 ![AI shift scheduler](docs/screenshot.png)
+
+## Highlights
+- **Your own team:** edit people (senior, min/max shifts) and the people needed per shift, then re-solve
+- **Explains every gap:** *"Fri night: 1 of 2 staffed. Everyone else: 3 on leave, 4 at their weekly maximum…"*
+- **Never leaves a shift empty:** when staff is short, the shortage is spread instead
+- **Excel export:** color-coded roster, coverage check, per-person totals
 
 ## Rules
 

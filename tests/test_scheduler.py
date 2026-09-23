@@ -99,3 +99,58 @@ def test_and_between_days_is_not_split_but_and_between_people_is():
     assert [c.days for c in r.changes] == [("Tue", "Wed")] and not r.not_understood
     r2 = parse_with_rules("Omar is off Monday and Layla is off Sunday", NAMES)
     assert {(c.employee, c.days) for c in r2.changes} == {("Omar", ("Mon",)), ("Layla", ("Sun",))}
+
+
+def test_custom_team_and_coverage_tables_drive_the_model():
+    from model import build_rules, sample_need, sample_team, validate_team
+
+    team = sample_team().iloc[:8].copy()
+    team.loc[len(team)] = ["Zoe", True, 3, 5]
+    need = sample_need() - 1
+    assert validate_team(team, need) == []
+    rules = build_rules(team, need)
+    assert [e.name for e in rules.staff][-1] == "Zoe"
+    assert ("Nadia", "M") not in rules.prefer  # preferences of removed people are dropped
+    roster = solve(rules, 5)
+    assert roster.status in ("OPTIMAL", "FEASIBLE")
+    _check_hard_rules(rules, roster)
+    bad = team.copy()
+    bad.loc[0, "max shifts"] = 9
+    assert validate_team(bad, need)
+
+
+def test_gaps_are_explained_person_by_person():
+    from model import explain_gap, senior_status
+
+    rules = default_rules()
+    for e in ("Ahmed", "Sara", "Maria"):
+        rules.off.update((e, d) for d in DAYS)
+    roster = solve(rules, 5)
+    d, s, _ = roster.shortages[0]
+    text = explain_gap(rules, roster, d, s)
+    assert "3 on leave" in text
+    d, s = roster.no_senior[0]
+    assert "Ahmed on leave" in senior_status(rules, roster, d, s)
+
+
+def test_excel_export_has_colored_roster():
+    import io
+
+    import openpyxl
+    from export import workbook
+
+    rules = default_rules()
+    roster = solve(rules, 3)
+    wb = openpyxl.load_workbook(io.BytesIO(workbook(rules, roster)))
+    assert wb.sheetnames == ["Roster", "Coverage", "Per person"]
+    assert wb["Roster"].max_row == len(rules.staff) + 1
+
+
+def test_short_weeks_never_leave_a_shift_empty():
+    rules = default_rules()
+    for e in ("Ahmed", "Sara", "Maria"):
+        rules.off.update((e, d) for d in DAYS)
+    roster = solve(rules, 5)
+    for d in DAYS:
+        for s in ("M", "E", "N"):
+            assert any(roster.assign.get((e.name, d)) == s for e in rules.staff), f"{d} {s} left empty"

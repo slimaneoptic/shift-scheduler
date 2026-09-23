@@ -15,7 +15,8 @@ try:
 except Exception:  # no secrets file locally
     pass
 
-from model import DAYS, SHIFTS, WEEKEND, Roster, default_rules, diff, solve  # noqa: E402
+from export import workbook  # noqa: E402
+from model import DAYS, SHIFTS, WEEKEND, Roster, build_rules as rules_from_tables, diff, explain_gap, sample_need, sample_team, senior_status, solve, validate_team  # noqa: E402
 from nl_parser import ParseError, ai_available, parse  # noqa: E402
 
 # ---- edit these two lines -------------------------------------------------
@@ -26,7 +27,13 @@ HIRE_URL = "https://www.upwork.com/freelancers/~01d6ae0f1a06a43ac0"
 MAX_AI_NOTES = 15  # per visitor session, keeps a public demo's API bill small
 SHIFT_COLORS = {"M": "#2a78d6", "E": "#eb6834", "N": "#1baf7a"}  # validated palette, slots 1-3
 GOOD, WARNING, CRITICAL = "#0ca30c", "#fab219", "#d03b3b"
-EXAMPLES = ["Ahmed is off Thursday", "Sara can't do nights", "Need 4 on Friday evening", "Nadia prefers mornings", "Maria: max 3 shifts"]
+EXAMPLES = {  # button label -> note sent to the reader
+    "Ahmed is off Thursday": "Ahmed is off Thursday",
+    "Sara can't do nights": "Sara can't do nights",
+    "Need 4 on Friday evening": "Need 4 on Friday evening",
+    "Nadia prefers mornings": "Nadia prefers mornings",
+    "Flu week: 3 seniors off": "Ahmed is off all week. Sara is off all week. Maria is off all week",
+}
 
 st.set_page_config(page_title="AI shift scheduler", page_icon="🗓️", layout="wide")
 st.markdown(
@@ -53,25 +60,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-NAMES = [e.name for e in default_rules().staff]
+def team_names() -> list[str]:
+    return [str(n).strip() for n in st.session_state.team["name"] if str(n).strip()]
 
 
 def build_rules(changes):
-    rules = default_rules()
+    rules = rules_from_tables(st.session_state.team, st.session_state.need)
+    names = {e.name for e in rules.staff}
     for c in changes:
-        c.apply(rules)
+        if c.employee is None or c.employee in names:
+            c.apply(rules)
     return rules
 
 
 def resolve(previous: Roster | None):
     rules = build_rules(st.session_state.changes)
     roster = solve(rules, 5, previous=previous)
-    st.session_state.moved = diff(previous, roster, NAMES) if previous else []
+    st.session_state.moved = diff(previous, roster, [e.name for e in rules.staff]) if previous else []
     st.session_state.roster = roster
     st.session_state.rules = rules
 
 
 if "roster" not in st.session_state:
+    st.session_state.team = sample_team()
+    st.session_state.need = sample_need()
     st.session_state.changes = []
     st.session_state.ai_calls = 0
     st.session_state.feedback = None
@@ -88,7 +100,7 @@ def apply_note(note: str):
     try:
         if ai_available():
             st.session_state.ai_calls += 1
-        result = parse(note, NAMES)
+        result = parse(note, team_names())
     except ParseError as err:
         st.session_state.feedback = ("error", str(err))
         return
@@ -126,11 +138,35 @@ def reset():
     resolve(None)
 
 
+def apply_team(team: pd.DataFrame, need: pd.DataFrame):
+    team = team.dropna(subset=["name"]).copy()
+    team["senior"] = team["senior"].fillna(False).astype(bool)
+    problems = validate_team(team, need)
+    if problems:
+        st.session_state.feedback = ("error", "Team not applied: " + " ".join(problems))
+        return
+    st.session_state.team, st.session_state.need = team.reset_index(drop=True), need.astype(int)
+    names = set(team_names())
+    st.session_state.changes = [c for c in st.session_state.changes if c.employee is None or c.employee in names]
+    resolve(None)
+    st.session_state.feedback = ("success", f"New team applied: {len(names)} people. The roster was rebuilt from scratch.")
+
+
+def reset_team():
+    for key in ("team_editor", "need_editor"):
+        st.session_state.pop(key, None)
+    st.session_state.team, st.session_state.need = sample_team(), sample_need()
+    st.session_state.changes = []
+    resolve(None)
+    st.session_state.feedback = ("success", "Back to the sample clinic team.")
+
+
 # ---------------------------------------------------------------- header + input
 st.title("AI shift scheduler")
 st.markdown(
-    "A one-week roster for a 12-person clinic team, built by an optimizer that respects rest times, contracts and seniority. "
-    "Tell it what changed in plain words. It re-plans and moves as few shifts as possible."
+    "A one-week roster built by an optimizer that respects rest times, contracts and seniority. "
+    "Tell it what changed in plain words: it re-plans, moves as few shifts as possible and explains any gap. "
+    "Starts with a sample clinic team; you can load your own below."
 )
 
 with st.form("note_form", clear_on_submit=False, border=False):
@@ -139,12 +175,35 @@ with st.form("note_form", clear_on_submit=False, border=False):
     c2.form_submit_button("Update roster", type="primary", width="stretch", on_click=on_submit)
 
 cols = st.columns(len(EXAMPLES))
-for col, text in zip(cols, EXAMPLES):
-    col.button(text, key=f"ex_{text}", on_click=on_example, args=(text,), width="stretch")
+for col, (label, note) in zip(cols, EXAMPLES.items()):
+    col.button(label, key=f"ex_{label}", on_click=on_example, args=(note,), width="stretch")
 st.caption(
     "Notes are read by an AI model, so write them the way you'd text a colleague." if ai_available()
     else "Notes are read by a basic English reader in this deployment. The AI version understands free-form notes."
 )
+
+with st.expander("Use your own team and coverage"):
+    st.caption("Edit the tables (add or remove rows at the bottom of the team table), then press **Apply**. Nothing is saved after you leave.")
+    t1, t2 = st.columns([1.25, 1.5], gap="large")
+    with t1:
+        team_edit = st.data_editor(
+            st.session_state.team, key="team_editor", num_rows="dynamic", hide_index=True, width="stretch",
+            column_config={
+                "name": st.column_config.TextColumn("Name", required=True),
+                "senior": st.column_config.CheckboxColumn("Senior"),
+                "min shifts": st.column_config.NumberColumn("Min shifts", min_value=0, max_value=7, step=1),
+                "max shifts": st.column_config.NumberColumn("Max shifts", min_value=0, max_value=7, step=1),
+            },
+        )
+    with t2:
+        st.markdown("**People needed per shift**")
+        need_edit = st.data_editor(
+            st.session_state.need, key="need_editor", width="stretch",
+            column_config={d: st.column_config.NumberColumn(d, min_value=0, max_value=50, step=1) for d in DAYS},
+        )
+    b1, b2, _ = st.columns([1, 1.3, 3])
+    b1.button("Apply", type="primary", on_click=apply_team, args=(team_edit, need_edit), width="stretch")
+    b2.button("Back to sample team", on_click=reset_team, width="stretch")
 
 if st.session_state.get("pending_note"):
     note = st.session_state.pop("pending_note")
@@ -163,7 +222,8 @@ changed_cells = {tuple(m.split(":")[0].rsplit(" ", 1)) for m in moved}
 # ---------------------------------------------------------------- KPIs
 total_slots = len(DAYS) * len(SHIFTS)
 short_slots = {(d, s) for d, s, _ in roster.shortages}
-nights = {e: sum(1 for d in DAYS if roster.assign.get((e, d)) == "N") for e in NAMES}
+names = [e.name for e in rules.staff]
+nights = {e: sum(1 for d in DAYS if roster.assign.get((e, d)) == "N") for e in names}
 pref_ok = 0
 for (e, s), sign in rules.prefer.items():
     worked = [roster.assign[(e, d)] for d in DAYS if (e, d) in roster.assign]
@@ -192,7 +252,7 @@ st.markdown(
 by_name = {e.name: e for e in rules.staff}
 head = "<tr><th></th>" + "".join(f'<th class="{"we" if d in WEEKEND else ""}">{d}</th>' for d in DAYS) + "<th>Shifts</th></tr>"
 body = []
-for e in NAMES:
+for e in names:
     emp = by_name[e]
     tag = "Senior" if emp.senior else ""
     cells = [f'<td class="name">{e}<small>{tag}</small></td>']
@@ -213,7 +273,7 @@ cov = []
 for s, (label, _) in SHIFTS.items():
     row = [f'<td class="name">{label} staff</td>']
     for d in DAYS:
-        have = sum(1 for e in NAMES if roster.assign.get((e, d)) == s)
+        have = sum(1 for e in names if roster.assign.get((e, d)) == s)
         need = rules.need.get((d, s), 0)
         if have < need:
             row.append(f'<td style="color:{CRITICAL};font-weight:700">⚠ {have}/{need}</td>')
@@ -226,8 +286,22 @@ for s, (label, _) in SHIFTS.items():
 
 st.markdown(f'<div class="grid-wrap"><table class="roster">{head}{"".join(body)}{"".join(cov)}</table></div>', unsafe_allow_html=True)
 
-grid = pd.DataFrame([[SHIFTS[roster.assign[(e, d)]][0] if (e, d) in roster.assign else "" for d in DAYS] for e in NAMES], index=NAMES, columns=DAYS)
-st.download_button("Download roster (CSV)", grid.to_csv().encode(), "roster.csv", "text/csv")
+if roster.shortages or roster.no_senior:
+    st.subheader("Why these gaps?")
+    lines = []
+    for d, s, miss in roster.shortages:
+        need = rules.need.get((d, s), 0)
+        lines.append(f"- **{d} {SHIFTS[s][0].lower()}:** {need - miss} of {need} staffed. Everyone else: {explain_gap(rules, roster, d, s)}.")
+    for d, s in roster.no_senior:
+        if (d, s) not in {(x, y) for x, y, _ in roster.shortages}:
+            lines.append(f"- **{d} {SHIFTS[s][0].lower()}, no senior:** {senior_status(rules, roster, d, s)}.")
+    st.markdown("\n".join(lines))
+    st.caption("Typical fixes: raise a part-timer's max shifts, lower the coverage for that shift, or approve overtime. Try them in the team table above.")
+
+grid = pd.DataFrame([[SHIFTS[roster.assign[(e, d)]][0] if (e, d) in roster.assign else "" for d in DAYS] for e in names], index=names, columns=DAYS)
+x1, x2, _ = st.columns([1.2, 1, 3])
+x1.download_button("Roster (Excel)", workbook(rules, roster), "roster.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+x2.download_button("Roster (CSV)", grid.to_csv().encode(), "roster.csv", "text/csv", width="stretch")
 
 # ---------------------------------------------------------------- applied changes
 st.subheader("Changes applied this week")
@@ -244,7 +318,7 @@ with st.expander("Rules the optimizer enforces"):
     st.markdown(
         f"""
 **Always:** one shift per person per day · at least 11 hours of rest between shifts (no evening→morning or night→morning/evening) ·
-at most 3 nights in a row · contract limits (full-time 4–5 shifts, part-time 2–3) · approved leave.
+at most 3 nights in a row · each person's min–max shifts from the team table · approved leave.
 
 **As much as possible:** the required number of people on every shift and at least one senior on each ·
 fair spread of nights and weekend shifts ({' & '.join(d for d in DAYS if d in WEEKEND)}) · personal preferences ·
