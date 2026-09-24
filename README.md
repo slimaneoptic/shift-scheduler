@@ -19,7 +19,7 @@ A one-week roster built by a constraint-programming optimizer. It starts with a 
 **Optimized:** required staff on every shift and a senior on each (it reports gaps rather than failing) · fair spread of nights and weekends · personal preferences · minimal disruption when the plan changes.
 
 ## Plain-language changes
-- **With an OpenRouter API key:** an AI model reads free-form notes ("omar called in sick tue and wed, need 4 people friday evening") and returns changes that match a strict JSON schema. Every change is validated before it reaches the solver. It uses free models by default and moves to the next one when a model is busy.
+- **With an OpenRouter API key:** an AI model (Gemini 3.8 Flash, ~3 s; free models take over if credits run out) reads free-form notes ("omar called in sick tue and wed, need 4 people friday evening") and returns changes that match a strict JSON schema. Every change is validated before it reaches the solver.
 - **Without a key, or when every model is busy:** a built-in English reader handles common phrasings (off / sick / leave, can't do nights, need N on a shift, prefers / avoids, max N shifts).
 
 ## How it works
@@ -32,7 +32,7 @@ export OPENROUTER_API_KEY=your-key   # optional
 streamlit run app.py
 pytest -q tests
 ```
-Optional: `OPENROUTER_MODELS="model-a,model-b"` overrides the model list (default: free models, see `llm.py`).
+Optional: `OPENROUTER_MODELS="model-a,model-b"` overrides the model list (default: Gemini 3.8 Flash, then free backups; see `llm.py`).
 
 ## Need this for your team?
 
