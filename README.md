@@ -1,6 +1,12 @@
 # AI shift scheduler
 
-**Live demo:** https://slimaneoptic-scheduler.streamlit.app
+A weekly roster that explains every gap, changed in plain words.
+
+**Live demo:** https://slimanechanchoul.com/scheduler/ · Streamlit app (may take a minute to wake): https://slimaneoptic-scheduler.streamlit.app
+
+Demo on sample data.
+
+Tests: `pytest -q tests`
 
 A one-week roster built by a constraint-programming optimizer. It starts with a 12-person clinic team, and you can **load your own team and coverage** in the app. Managers change it in plain words, like *"Ahmed is off Thursday"* or *"Need 4 on Friday evening"*, and it re-plans while moving as few shifts as possible.
 
