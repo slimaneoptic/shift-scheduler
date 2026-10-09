@@ -20,7 +20,7 @@ from model import DAYS, SHIFTS, WEEKEND, Roster, build_rules as rules_from_table
 from nl_parser import ParseError, ai_available, parse  # noqa: E402
 
 # ---- edit these two lines -------------------------------------------------
-AUTHOR = "Slimane"
+AUTHOR = "S'limane"
 HIRE_URL = "https://www.upwork.com/freelancers/~01d6ae0f1a06a43ac0"
 # ---------------------------------------------------------------------------
 
